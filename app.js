@@ -168,10 +168,19 @@ function dedupeHistory(list) {
   }
   return [...map.values()].map(x => x.h).sort((a, b) => a.date < b.date ? -1 : 1);
 }
+// notas do coach: uma por dia, ganha a mais completa (versões editadas do mesmo dia colapsam)
+function dedupeNotes(list) {
+  const map = new Map();
+  for (const n of list || []) {
+    const prev = map.get(n.date);
+    if (!prev || (n.text || '').length > (prev.text || '').length) map.set(n.date, n);
+  }
+  return [...map.values()].sort((a, b) => a.date < b.date ? -1 : 1);
+}
 function migrate(s) {
   s.version = 3;
   s.updatedAt = s.updatedAt || new Date().toISOString();
-  s.coachNotes = s.coachNotes || [];
+  s.coachNotes = dedupeNotes(s.coachNotes || []);
   s.plan.days.forEach(d => { d.type = d.type || 'gym'; d.exercises = d.exercises || []; });
   if (!s.plan.days.some(d => d.type === 'cardio'))
     s.plan.days.push({ id: 'dR', name: 'Corrida', type: 'cardio', weekdays: [], targetMinutes: 25, exercises: [] });
@@ -242,10 +251,7 @@ function mergeStates(local, remote) {
       .filter(h => !deleted.includes(h.id))
       .filter(h => seen.has(h.id) ? false : (seen.add(h.id), true))
   );
-  const seenN = new Set();
-  const coachNotes = [...(local.coachNotes || []), ...(remote.coachNotes || [])]
-    .filter(n => { const k = n.date + '|' + n.text; return seenN.has(k) ? false : (seenN.add(k), true); })
-    .sort((a, b) => a.date < b.date ? -1 : 1);
+  const coachNotes = dedupeNotes([...(local.coachNotes || []), ...(remote.coachNotes || [])]);
   const merged = { ...base, history, coachNotes, deleted };
   if (local.activeSession) merged.activeSession = local.activeSession; // nunca perder treino em curso
   return merged;
@@ -950,7 +956,7 @@ function viewSettings() {
     <div class="card"><h3>🗑️ Apagar tudo</h3>
       <p class="muted">Remove todos os dados (plano e histórico) deste dispositivo e repõe o plano inicial.</p>
       <button class="btn danger" onclick="app.resetAll()">Apagar todos os dados</button></div>
-    <p class="muted small" style="text-align:center">GymTrack v3.4</p>`;
+    <p class="muted small" style="text-align:center">GymTrack v3.5</p>`;
 }
 function setRest(v) { state.settings.restSeconds = parseInt(v); save(); }
 function exportData() {
