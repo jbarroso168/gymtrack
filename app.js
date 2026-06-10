@@ -655,7 +655,8 @@ function viewSettings() {
       <p class="muted">Abre esta app no Safari → botão Partilhar → "Adicionar ao ecrã principal". Fica com ícone próprio e funciona offline.</p></div>
     <div class="card"><h3>🗑️ Apagar tudo</h3>
       <p class="muted">Remove todos os dados (plano e histórico) deste dispositivo e repõe o plano inicial.</p>
-      <button class="btn danger" onclick="app.resetAll()">Apagar todos os dados</button></div>`;
+      <button class="btn danger" onclick="app.resetAll()">Apagar todos os dados</button></div>
+    <p class="muted small" style="text-align:center">GymTrack v2.1</p>`;
 }
 function setRest(v) { state.settings.restSeconds = parseInt(v); save(); }
 function exportData() {
