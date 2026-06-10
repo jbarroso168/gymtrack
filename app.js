@@ -167,8 +167,9 @@ let route = 'today';
 let calOffset = 0;
 let progressEx = null;
 let chart = null;
+let planEdit = false;
 
-function navigate(r) { route = r; render(); }
+function navigate(r) { if (r !== route) planEdit = false; route = r; render(); }
 function render() {
   document.querySelectorAll('#tabs button').forEach(b =>
     b.classList.toggle('active', b.dataset.route === route));
@@ -540,25 +541,28 @@ function drawChart() {
 
 /* ---------------- vista: PLANO ---------------- */
 function viewPlan() {
-  return `<h1>Plano de treino</h1><p class="sub">Full Body 3×/semana · Mesociclo 1 (readaptação) · edita à vontade</p>
+  return `<div class="row"><h1>Plano de treino</h1>
+      <button class="btn sm ${planEdit ? 'primary' : ''}" onclick="app.togglePlanEdit()">${planEdit ? '✓ Concluir' : '✏️ Editar plano'}</button></div>
+    <p class="sub">Full Body 3×/semana · Mesociclo 1 (readaptação)${planEdit ? ' · modo de edição' : ''}</p>
     ${state.plan.days.map(d => `
       <div class="card">
         <div class="row"><h3>${esc(d.name)}</h3>
-          <div><button class="btn sm" onclick="app.renameDay('${d.id}')">✏️</button>
-          <button class="btn sm danger" onclick="app.removeDay('${d.id}')">🗑️</button></div></div>
+          ${planEdit ? `<div><button class="btn sm" onclick="app.renameDay('${d.id}')">✏️</button>
+          <button class="btn sm danger" onclick="app.removeDay('${d.id}')">🗑️</button></div>` : ''}</div>
         <div class="chips">${WEEKDAYS.map((w, i) =>
-          `<span class="chip ${d.weekdays.includes(i) ? 'on' : ''}" onclick="app.toggleWeekday('${d.id}',${i})">${w}</span>`).join('')}</div>
+          `<span class="chip ${d.weekdays.includes(i) ? 'on' : ''}" ${planEdit ? `onclick="app.toggleWeekday('${d.id}',${i})"` : ''}>${w}</span>`).join('')}</div>
         ${d.exercises.map(e => `
           <div class="plan-ex">
             <div class="info"><b>${esc(e.name)}</b> <span class="badge">${EQUIPS[e.equip]?.label || e.equip}</span>
               <div>${repsLabel(e)} · ${weightsLabel(e)}</div></div>
-            <div><button class="btn sm" onclick="app.editExercise('${d.id}','${e.id}')">✏️</button>
-            <button class="btn sm danger" onclick="app.removeExercise('${d.id}','${e.id}')">✕</button></div>
+            ${planEdit ? `<div><button class="btn sm" onclick="app.editExercise('${d.id}','${e.id}')">✏️</button>
+            <button class="btn sm danger" onclick="app.removeExercise('${d.id}','${e.id}')">✕</button></div>` : ''}
           </div>`).join('')}
-        <button class="btn sm block ghost" style="margin-top:10px" onclick="app.editExercise('${d.id}',null)">+ Adicionar exercício</button>
+        ${planEdit ? `<button class="btn sm block ghost" style="margin-top:10px" onclick="app.editExercise('${d.id}',null)">+ Adicionar exercício</button>` : ''}
       </div>`).join('')}
-    <button class="btn block" onclick="app.addDay()">+ Adicionar treino</button>`;
+    ${planEdit ? `<button class="btn block" onclick="app.addDay()">+ Adicionar treino</button>` : ''}`;
 }
+function togglePlanEdit() { planEdit = !planEdit; render(); }
 function addDay() {
   const name = prompt('Nome do treino (ex: Dia D — Ombros):');
   if (!name) return;
@@ -656,7 +660,7 @@ function viewSettings() {
     <div class="card"><h3>🗑️ Apagar tudo</h3>
       <p class="muted">Remove todos os dados (plano e histórico) deste dispositivo e repõe o plano inicial.</p>
       <button class="btn danger" onclick="app.resetAll()">Apagar todos os dados</button></div>
-    <p class="muted small" style="text-align:center">GymTrack v2.2</p>`;
+    <p class="muted small" style="text-align:center">GymTrack v2.3</p>`;
 }
 function setRest(v) { state.settings.restSeconds = parseInt(v); save(); }
 function exportData() {
@@ -705,7 +709,7 @@ document.getElementById('modal-backdrop').addEventListener('click', e => {
 });
 window.app = {
   startWorkout, setField, toggleSet, setFeedback, setExNote, setNotes, cancelWorkout, finishWorkout,
-  stopRestTimer, calMove, showWorkout, pickExercise, renameDay, removeDay, addDay,
+  stopRestTimer, calMove, showWorkout, pickExercise, togglePlanEdit, renameDay, removeDay, addDay,
   toggleWeekday, editExercise, equipChanged, saveExercise, removeExercise, setRest,
   exportData, importData, resetAll, closeModal,
 };
