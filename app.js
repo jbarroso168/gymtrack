@@ -950,7 +950,7 @@ function viewSettings() {
     <div class="card"><h3>🗑️ Apagar tudo</h3>
       <p class="muted">Remove todos os dados (plano e histórico) deste dispositivo e repõe o plano inicial.</p>
       <button class="btn danger" onclick="app.resetAll()">Apagar todos os dados</button></div>
-    <p class="muted small" style="text-align:center">GymTrack v3.2</p>`;
+    <p class="muted small" style="text-align:center">GymTrack v3.3</p>`;
 }
 function setRest(v) { state.settings.restSeconds = parseInt(v); save(); }
 function exportData() {
@@ -1007,6 +1007,11 @@ window.app = {
 };
 render();
 if (syncCfg) syncStart();
+// ir buscar novidades sempre que a app volta ao ecrã (trocar de app / voltar ao separador)
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && syncCfg) syncStart();
+});
+window.addEventListener('focus', () => { if (syncCfg) syncStart(); });
 
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
   navigator.serviceWorker.register('sw.js').catch(() => {});
