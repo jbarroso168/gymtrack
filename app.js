@@ -185,7 +185,10 @@ let syncCfg = null, syncTimer = null, syncStatus = 'off', syncMsg = '';
 try { syncCfg = JSON.parse(localStorage.getItem('gymtrack-sync')); } catch (e) {}
 
 function syncHeaders() {
-  return { apikey: syncCfg.key, Authorization: 'Bearer ' + syncCfg.key, 'Content-Type': 'application/json' };
+  // chaves novas (sb_publishable_...) só usam o header apikey; as antigas (eyJ...) também vão no Authorization
+  const h = { apikey: syncCfg.key, 'Content-Type': 'application/json' };
+  if (syncCfg.key.startsWith('eyJ')) h.Authorization = 'Bearer ' + syncCfg.key;
+  return h;
 }
 async function syncPull() {
   const r = await fetch(`${syncCfg.url}/rest/v1/gymtrack_state?id=eq.${encodeURIComponent(syncCfg.id)}&select=data`, { headers: syncHeaders() });
@@ -880,7 +883,7 @@ function viewSettings() {
             <button class="btn danger" onclick="app.disconnectSync()">Desligar</button></div>`
         : `<div class="form-grid">
             <label class="full">URL do projeto<input id="s-url" placeholder="https://xxxx.supabase.co"></label>
-            <label class="full">Chave anon (public)<input id="s-key" placeholder="eyJ…"></label>
+            <label class="full">Chave (publishable / anon)<input id="s-key" placeholder="sb_publishable_… ou eyJ…"></label>
           </div>
           <button class="btn primary block" onclick="app.connectSync()">Ligar e sincronizar</button>`}
     </div>
