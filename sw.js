@@ -1,4 +1,4 @@
-const CACHE = 'gymtrack-v2';
+const CACHE = 'gymtrack-v2.2';
 const ASSETS = [
   './',
   './index.html',
@@ -19,11 +19,12 @@ self.addEventListener('activate', e => {
   );
 });
 
-// network-first: atualizações chegam logo; cache é o fallback offline
+// network-first: atualizações chegam logo; cache é o fallback offline.
+// cache:'no-cache' força revalidação no servidor (contorna o max-age=600 do GitHub Pages)
 self.addEventListener('fetch', e => {
   if (e.request.method !== 'GET') return;
   e.respondWith(
-    fetch(e.request).then(res => {
+    fetch(e.request, { cache: 'no-cache' }).then(res => {
       if (res.ok) {
         const copy = res.clone();
         caches.open(CACHE).then(c => c.put(e.request, copy));
