@@ -223,7 +223,11 @@ function mergeStates(local, remote) {
   const history = [...(local.history || []), ...(remote.history || [])]
     .filter(h => seen.has(h.id) ? false : (seen.add(h.id), true))
     .sort((a, b) => a.date < b.date ? -1 : 1);
-  const merged = { ...base, history };
+  const seenN = new Set();
+  const coachNotes = [...(local.coachNotes || []), ...(remote.coachNotes || [])]
+    .filter(n => { const k = n.date + '|' + n.text; return seenN.has(k) ? false : (seenN.add(k), true); })
+    .sort((a, b) => a.date < b.date ? -1 : 1);
+  const merged = { ...base, history, coachNotes };
   if (local.activeSession) merged.activeSession = local.activeSession; // nunca perder treino em curso
   return merged;
 }
