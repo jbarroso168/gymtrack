@@ -159,10 +159,10 @@ function defaultState() {
 function dedupeHistory(list) {
   const map = new Map();
   for (const h of list || []) {
-    const k = h.type === 'cardio'
-      ? `${h.date}|${h.name}|${h.minutes || 0}|${h.km || 0}`
-      : `${h.date}|${h.name}`;
-    const score = (h.exercises || []).reduce((t, e) => t + (e.sets || []).filter(st => st.done).length, 0);
+    // cardio: 1 corrida por dia (cópias antigas tinham nomes/ids diferentes); ginásio: data+nome
+    const k = h.type === 'cardio' ? `${h.date}|cardio` : `${h.date}|${h.name}`;
+    const score = (h.exercises || []).reduce((t, e) => t + (e.sets || []).filter(st => st.done).length, 0)
+      + (h.minutes ? 10 : 0) + (h.km ? 10 : 0);
     const prev = map.get(k);
     if (!prev || score > prev.score) map.set(k, { h, score });
   }
@@ -950,7 +950,7 @@ function viewSettings() {
     <div class="card"><h3>🗑️ Apagar tudo</h3>
       <p class="muted">Remove todos os dados (plano e histórico) deste dispositivo e repõe o plano inicial.</p>
       <button class="btn danger" onclick="app.resetAll()">Apagar todos os dados</button></div>
-    <p class="muted small" style="text-align:center">GymTrack v3.3</p>`;
+    <p class="muted small" style="text-align:center">GymTrack v3.4</p>`;
 }
 function setRest(v) { state.settings.restSeconds = parseInt(v); save(); }
 function exportData() {
