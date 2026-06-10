@@ -86,6 +86,7 @@ textarea{width:100%;background:var(--bg2);border:1px solid var(--border);color:v
 .cal-day.out{opacity:.25}
 .cal-day.today{border-color:var(--info)}
 .cal-day.trained{background:var(--accent-dark);border-color:var(--accent-dark);color:#fff;cursor:pointer;font-weight:700}
+.cal-day.cardio{background:#1d4ed8;border-color:#1d4ed8;color:#fff;cursor:pointer;font-weight:700}
 .cal-day .dot{font-size:.55rem;line-height:1}
 
 /* stats */

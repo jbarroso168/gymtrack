@@ -56,8 +56,11 @@ function hist(date, name, exercises, notes = '') {
 }
 function defaultState() {
   return {
-    version: 2,
+    version: 3,
     settings: { unit: 'kg', restSeconds: 90 },
+    coachNotes: [
+      { date: '2026-06-11', text: 'Semana 25 — última do Mesociclo 1. Mantém as cargas que a app sugere e não forces o isquio direito (RDL, lunges, bulgarians: pára se houver desconforto). No fim desta semana fazemos a revisão completa e na S26 arranca o Mesociclo 2 com ~30% dos exercícios trocados.' },
+    ],
     plan: {
       days: [
         { id: 'dA', name: 'Dia A — Quad + Push/Pull horizontal', weekdays: [1], exercises: [
@@ -78,6 +81,7 @@ function defaultState() {
           ex('Triceps Pushdown (corda)', 'maquina', 4, 10, 15, [3, 4, 4, 5], 1),
           ex('DB Chest Fly (aberturas)', 'halteres', 3, 10, 12, [8, 8, 8], 2, 'Novo — calibrar carga no 1.º treino'),
         ]},
+        { id: 'dR', name: 'Corrida', type: 'cardio', weekdays: [], targetMinutes: 25, exercises: [] },
         { id: 'dC', name: 'Dia C — Misto', weekdays: [5], exercises: [
           ex('DB Bulgarian Split Squat', 'halteres', 3, 8, 8, [8, 8, 8], 2, 'Manter enquanto o isquio recupera'),
           ex('Incline DB Press', 'halteres', 4, 10, 12, [8, 10, 12, 12], 2, 'Consolidar 12 kg (última cortou às 6)'),
@@ -99,7 +103,7 @@ function defaultState() {
         hx('Cable Curl (corda)', 'maquina', [4, 5, 6], [12, 12, 10], 'ok'),
         hx('Plank frontal', 'tempo', null, [45, 45, 45], 'ok'),
       ], 'Semana 21'),
-      hist('2026-05-21', 'Corrida — 25 min', [], 'Semana 21 · ~3 km, blocos 6→10 km/h'),
+      { ...hist('2026-05-21', 'Corrida', [], 'Semana 21 · blocos 6→10 km/h'), type: 'cardio', minutes: 25, km: 3 },
       hist('2026-05-23', 'Dia B — Posterior + Push/Pull vertical', [
         hx('DB RDL', 'halteres', [8, 10, 12, 14], [12, 12, 12, 12], 'easy'),
         hx('Lat Pulldown', 'maquina', [10, 12, 13, 14], [12, 12, 10, 8], 'hard', 'Última difícil'),
@@ -150,16 +154,109 @@ function defaultState() {
 }
 
 /* ---------------- store ---------------- */
+function migrate(s) {
+  s.version = 3;
+  s.updatedAt = s.updatedAt || new Date().toISOString();
+  s.coachNotes = s.coachNotes || [];
+  s.plan.days.forEach(d => { d.type = d.type || 'gym'; d.exercises = d.exercises || []; });
+  if (!s.plan.days.some(d => d.type === 'cardio'))
+    s.plan.days.push({ id: 'dR', name: 'Corrida', type: 'cardio', weekdays: [], targetMinutes: 25, exercises: [] });
+  s.history.forEach(h => {
+    if (!h.type) h.type = (!h.exercises || !h.exercises.length) && /corrida|cardio/i.test(h.name) ? 'cardio' : 'gym';
+  });
+  return s;
+}
 let state = load();
 function load() {
   try {
     const raw = localStorage.getItem(STORE_KEY);
-    if (raw) return JSON.parse(raw);
+    if (raw) return migrate(JSON.parse(raw));
   } catch (e) { console.error('load falhou', e); }
-  return defaultState();
+  return migrate(defaultState());
 }
 function save() {
+  state.updatedAt = new Date().toISOString();
   localStorage.setItem(STORE_KEY, JSON.stringify(state));
+  schedulePush();
+}
+
+/* ---------------- sincronização (Supabase) ---------------- */
+let syncCfg = null, syncTimer = null, syncStatus = 'off', syncMsg = '';
+try { syncCfg = JSON.parse(localStorage.getItem('gymtrack-sync')); } catch (e) {}
+
+function syncHeaders() {
+  return { apikey: syncCfg.key, Authorization: 'Bearer ' + syncCfg.key, 'Content-Type': 'application/json' };
+}
+async function syncPull() {
+  const r = await fetch(`${syncCfg.url}/rest/v1/gymtrack_state?id=eq.${encodeURIComponent(syncCfg.id)}&select=data`, { headers: syncHeaders() });
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  const rows = await r.json();
+  return rows[0] ? rows[0].data : null;
+}
+async function syncPush() {
+  if (!syncCfg) return;
+  syncStatus = 'syncing'; updateSyncUi();
+  try {
+    const r = await fetch(`${syncCfg.url}/rest/v1/gymtrack_state`, {
+      method: 'POST',
+      headers: { ...syncHeaders(), Prefer: 'resolution=merge-duplicates' },
+      body: JSON.stringify([{ id: syncCfg.id, data: state, updated_at: new Date().toISOString() }]),
+    });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    syncStatus = 'ok';
+    syncMsg = 'sincronizado às ' + new Date().toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' });
+  } catch (e) { syncStatus = 'error'; syncMsg = e.message; }
+  updateSyncUi();
+}
+function schedulePush() {
+  if (!syncCfg) return;
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(syncPush, 1500);
+}
+function mergeStates(local, remote) {
+  if (!remote) return local;
+  const base = (remote.updatedAt || '') > (local.updatedAt || '') ? remote : local;
+  const seen = new Set();
+  const history = [...(local.history || []), ...(remote.history || [])]
+    .filter(h => seen.has(h.id) ? false : (seen.add(h.id), true))
+    .sort((a, b) => a.date < b.date ? -1 : 1);
+  const merged = { ...base, history };
+  if (local.activeSession) merged.activeSession = local.activeSession; // nunca perder treino em curso
+  return merged;
+}
+async function syncStart() {
+  if (!syncCfg) return;
+  syncStatus = 'syncing'; updateSyncUi();
+  try {
+    const remote = await syncPull();
+    state = migrate(mergeStates(state, remote));
+    localStorage.setItem(STORE_KEY, JSON.stringify(state));
+    render();
+    await syncPush();
+  } catch (e) { syncStatus = 'error'; syncMsg = e.message; updateSyncUi(); }
+}
+function syncLabel() {
+  if (!syncCfg) return '⚪ não configurada';
+  return { off: '🟡 ligada (à espera)', syncing: '🔄 a sincronizar…', ok: '🟢 ' + syncMsg, error: '🔴 erro: ' + syncMsg }[syncStatus];
+}
+function updateSyncUi() {
+  const el = document.getElementById('sync-status');
+  if (el) el.textContent = syncLabel();
+}
+function connectSync() {
+  const url = document.getElementById('s-url').value.trim().replace(/\/+$/, '');
+  const key = document.getElementById('s-key').value.trim();
+  if (!/^https:\/\/.+\.supabase\.co$/.test(url) || !key) { alert('Confirma o URL (https://xxxx.supabase.co) e a chave anon.'); return; }
+  syncCfg = { url, key, id: 'joao' };
+  localStorage.setItem('gymtrack-sync', JSON.stringify(syncCfg));
+  render();
+  syncStart();
+}
+function disconnectSync() {
+  if (!confirm('Desligar a sincronização neste dispositivo? Os dados locais mantêm-se.')) return;
+  localStorage.removeItem('gymtrack-sync');
+  syncCfg = null; syncStatus = 'off'; syncMsg = '';
+  render();
 }
 
 /* ---------------- router ---------------- */
@@ -183,7 +280,7 @@ function render() {
 function viewToday() {
   const dow = new Date().getDay();
   const suggested = state.plan.days.find(d => d.weekdays.includes(dow));
-  const doneToday = state.history.some(h => h.date === todayKey());
+  const doneToday = state.history.some(h => h.date === todayKey() && h.type !== 'cardio');
   let html = `<h1>Olá, João! 💪</h1><p class="sub">${new Date().toLocaleDateString('pt-PT', { weekday: 'long', day: 'numeric', month: 'long' })}</p>`;
 
   if (doneToday) html += `<div class="card highlight"><h3>✅ Treino de hoje concluído</h3><p class="muted">Bom trabalho. Descansa e hidrata-te!</p></div>`;
@@ -196,16 +293,41 @@ function viewToday() {
     html += others.map(d => dayCard(d, false)).join('');
   }
 
+  const cn = (state.coachNotes || [])[state.coachNotes.length - 1];
+  if (cn) {
+    html += `<div class="card"><h3>🧠 Nota do coach</h3><p class="muted small">${fmtDate(cn.date)}</p>
+      <p style="margin:6px 0 0;font-size:.92rem">${esc(cn.text)}</p>
+      ${state.coachNotes.length > 1 ? `<button class="btn sm ghost" style="margin-top:8px" onclick="app.showCoachNotes()">Ver notas anteriores</button>` : ''}</div>`;
+  }
+
   const last = state.history[state.history.length - 1];
   if (last) {
+    const desc = last.type === 'cardio'
+      ? [last.minutes ? `${last.minutes} min` : '', last.km ? `${last.km} km` : ''].filter(Boolean).join(' · ')
+      : `${last.exercises.length} exercícios${volume(last) ? ` · ${volume(last).toLocaleString('pt-PT')} kg de volume` : ''}`;
     html += `<h2>Último treino</h2>
-      <div class="card"><div class="row"><div><h3>${esc(last.name)}</h3>
-      <p class="muted">${fmtDate(last.date)} · ${last.exercises.length} exercícios${volume(last) ? ` · ${volume(last).toLocaleString('pt-PT')} kg de volume` : ''}</p></div>
+      <div class="card"><div class="row"><div><h3>${last.type === 'cardio' ? '🏃 ' : ''}${esc(last.name)}</h3>
+      <p class="muted">${fmtDate(last.date)}${desc ? ' · ' + desc : ''}</p></div>
       <button class="btn sm" onclick="app.showWorkout('${last.id}')">Ver</button></div></div>`;
   }
   return html;
 }
+function showCoachNotes() {
+  const notes = (state.coachNotes || []).slice().reverse();
+  openModal(`<h3>🧠 Notas do coach</h3>
+    ${notes.map(n => `<div class="summary-item"><b>${fmtDate(n.date)}</b><br><span class="muted">${esc(n.text)}</span></div>`).join('')}
+    <button class="btn block" style="margin-top:14px" onclick="app.closeModal()">Fechar</button>`);
+}
 function dayCard(day, suggested) {
+  if (day.type === 'cardio') {
+    return `<div class="card ${suggested ? 'highlight' : ''}">
+      <div class="row"><div>
+        <h3>${suggested ? '⭐ ' : ''}🏃 ${esc(day.name)}</h3>
+        <p class="muted">${day.targetMinutes ? `~${day.targetMinutes} min · ` : ''}${day.weekdays.map(w => WEEKDAYS[w]).join(', ') || 'quando quiseres'}</p>
+      </div>
+      <button class="btn ${suggested ? 'primary' : ''}" onclick="app.logCardio()">Registar</button></div>
+    </div>`;
+  }
   const adjs = day.exercises.filter(e => e.lastAdj).length;
   return `<div class="card ${suggested ? 'highlight' : ''}">
     <div class="row"><div>
@@ -218,9 +340,34 @@ function dayCard(day, suggested) {
 }
 
 /* ---------------- sessão de treino ---------------- */
+function logCardio() {
+  openModal(`<h3>🏃 Registar corrida</h3>
+    <div class="form-grid">
+      <label>Data<input id="c-date" type="date" value="${todayKey()}"></label>
+      <label>Minutos<input id="c-min" type="number" inputmode="decimal" placeholder="25"></label>
+      <label>Distância (km)<input id="c-km" type="number" step="0.1" inputmode="decimal" placeholder="3.0"></label>
+      <label class="full">Notas<input id="c-notes" placeholder="ritmo, sensações, intervalos…"></label>
+    </div>
+    <div class="btnrow"><button class="btn" onclick="app.closeModal()">Cancelar</button>
+    <button class="btn primary" onclick="app.saveCardio()">Guardar ✓</button></div>`);
+}
+function saveCardio() {
+  const date = document.getElementById('c-date').value || todayKey();
+  const minutes = parseFloat(document.getElementById('c-min').value) || 0;
+  const km = parseFloat(document.getElementById('c-km').value) || 0;
+  if (!minutes && !km) { alert('Indica pelo menos os minutos ou a distância.'); return; }
+  state.history.push({
+    id: uid(), type: 'cardio', planDayId: null, name: 'Corrida', date,
+    startedAt: date + 'T12:00:00.000Z', finishedAt: date + 'T12:00:00.000Z',
+    minutes, km, notes: document.getElementById('c-notes').value, exercises: [],
+  });
+  state.history.sort((a, b) => a.date < b.date ? -1 : 1);
+  save(); closeModal(); render();
+}
 function startWorkout(dayId) {
   const day = state.plan.days.find(d => d.id === dayId);
   if (!day) return;
+  if (day.type === 'cardio') { logCardio(); return; }
   state.activeSession = {
     id: uid(),
     planDayId: day.id,
@@ -408,7 +555,8 @@ function viewCalendar() {
     const key = todayKey(new Date(m.getFullYear(), m.getMonth(), d));
     const trained = byDate[key];
     const isToday = key === todayKey();
-    cells += `<div class="cal-day ${trained ? 'trained' : ''} ${isToday ? 'today' : ''}"
+    const onlyCardio = trained && trained.every(h => h.type === 'cardio');
+    cells += `<div class="cal-day ${trained ? (onlyCardio ? 'cardio' : 'trained') : ''} ${isToday ? 'today' : ''}"
       ${trained ? `onclick="app.showWorkout('${trained[0].id}')"` : ''}>
       ${d}${trained ? '<span class="dot">●</span>' : ''}</div>`;
   }
@@ -454,6 +602,18 @@ function setDisplay(sx, st) {
 function showWorkout(id) {
   const h = state.history.find(x => x.id === id);
   if (!h) return;
+  if (h.type === 'cardio') {
+    const pace = h.minutes && h.km ? h.minutes / h.km : null;
+    openModal(`<h3>🏃 ${esc(h.name)}</h3><p class="muted">${fmtDate(h.date)}</p>
+      <div class="stats" style="margin-top:12px;grid-template-columns:1fr 1fr">
+        <div class="stat"><div class="v">${h.minutes || '—'}</div><div class="l">minutos</div></div>
+        <div class="stat"><div class="v">${h.km || '—'}</div><div class="l">km</div></div>
+      </div>
+      ${pace ? `<p class="muted">Ritmo: ${Math.floor(pace)}:${String(Math.round((pace % 1) * 60)).padStart(2, '0')} min/km</p>` : ''}
+      ${h.notes ? `<p class="muted">📝 ${esc(h.notes)}</p>` : ''}
+      <button class="btn block" style="margin-top:8px" onclick="app.closeModal()">Fechar</button>`);
+    return;
+  }
   const vol = volume(h);
   openModal(`<h3>${esc(h.name)}</h3><p class="muted">${fmtDate(h.date)}${vol ? ` · volume ${vol.toLocaleString('pt-PT')} kg` : ''}</p>
     ${h.exercises.map(sx => `<div class="summary-item"><b>${esc(sx.name)}</b> ${sx.feedback ? FEEDBACKS.find(f => f.id === sx.feedback)?.label.split(' ')[0] : ''}<br>
@@ -481,27 +641,71 @@ function allExerciseNames() {
   state.history.forEach(h => h.exercises.forEach(e => names.add(e.name)));
   return [...names];
 }
+function weekMonday(offsetWeeks = 0) {
+  const d = new Date();
+  d.setDate(d.getDate() - ((d.getDay() + 6) % 7) - offsetWeeks * 7);
+  return d;
+}
+function weekKeyOf(dateStr) {
+  const d = new Date(dateStr + 'T12:00:00');
+  d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+  return todayKey(d);
+}
 function viewProgress() {
   const names = allExerciseNames();
   if (!progressEx || !names.includes(progressEx)) progressEx = names[0] || null;
-  const last30 = state.history.filter(h => (Date.now() - new Date(h.date + 'T12:00:00')) / 86400000 <= 30).length;
-  const weekVol = state.history.filter(h => (Date.now() - new Date(h.date + 'T12:00:00')) / 86400000 <= 7)
-    .reduce((t, h) => t + volume(h), 0);
+  const days30 = h => (Date.now() - new Date(h.date + 'T12:00:00')) / 86400000 <= 30;
+  const gym30 = state.history.filter(h => h.type !== 'cardio' && days30(h)).length;
+  const runs30 = state.history.filter(h => h.type === 'cardio' && days30(h));
+  const km30 = runs30.reduce((t, h) => t + (h.km || 0), 0);
   const unit = EQUIPS[exerciseEquip(progressEx)]?.unit || 'kg';
   return `<h1>Progresso</h1><p class="sub">A tua evolução ao longo do tempo</p>
+    <h2 style="margin-top:4px">Visão geral</h2>
     <div class="stats">
-      <div class="stat"><div class="v">${state.history.length}</div><div class="l">treinos no total</div></div>
-      <div class="stat"><div class="v">${last30}</div><div class="l">últimos 30 dias</div></div>
-      <div class="stat"><div class="v">${weekVol.toLocaleString('pt-PT')}</div><div class="l">kg volume (halteres) / 7 dias</div></div>
-      <div class="stat"><div class="v">${streak()}</div><div class="l">semanas seguidas</div></div>
+      <div class="stat"><div class="v">${gym30}</div><div class="l">treinos de ginásio · 30 dias</div></div>
+      <div class="stat"><div class="v">${runs30.length}</div><div class="l">corridas · 30 dias</div></div>
+      <div class="stat"><div class="v">${km30 ? km30.toLocaleString('pt-PT') : 0}</div><div class="l">km corridos · 30 dias</div></div>
+      <div class="stat"><div class="v">${streak()}</div><div class="l">semanas seguidas ativas</div></div>
     </div>
-    <h2>Evolução por exercício</h2>
+    <div class="chart-wrap"><canvas id="chart-weeks" height="180"></canvas></div>
+    <p class="muted small" style="margin-top:8px">Treinos por semana (últimas 8): verde ginásio · azul corrida</p>
+    <h2>Por exercício</h2>
     <select onchange="app.pickExercise(this.value)">${names.map(n => `<option ${n === progressEx ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select>
     <div class="chart-wrap"><canvas id="chart" height="220"></canvas></div>
-    <p class="muted small" style="margin-top:8px">Linha verde: carga máxima por sessão (${unit}) · Linha azul: total de reps × carga da sessão</p>`;
+    <p class="muted small" style="margin-top:8px">Linha verde: carga máxima por sessão (${unit}) · Linha azul: volume da sessão</p>`;
 }
 function pickExercise(n) { progressEx = n; render(); }
+let chartW = null;
+function drawWeeksChart() {
+  const cv = document.getElementById('chart-weeks');
+  if (!cv || !window.Chart) return;
+  const labels = [], gymC = [], runC = [];
+  for (let i = 7; i >= 0; i--) {
+    const mon = weekMonday(i);
+    const wk = todayKey(mon);
+    labels.push(mon.toLocaleDateString('pt-PT', { day: 'numeric', month: 'numeric' }));
+    gymC.push(state.history.filter(h => h.type !== 'cardio' && weekKeyOf(h.date) === wk).length);
+    runC.push(state.history.filter(h => h.type === 'cardio' && weekKeyOf(h.date) === wk).length);
+  }
+  if (chartW) { chartW.destroy(); chartW = null; }
+  chartW = new Chart(cv, {
+    type: 'bar',
+    data: { labels, datasets: [
+      { label: 'Ginásio', data: gymC, backgroundColor: '#16a34a', borderRadius: 4 },
+      { label: 'Corrida', data: runC, backgroundColor: '#2563eb', borderRadius: 4 },
+    ]},
+    options: {
+      responsive: true,
+      scales: {
+        x: { stacked: true, ticks: { color: '#9aa3b5' }, grid: { display: false } },
+        y: { stacked: true, ticks: { color: '#9aa3b5', stepSize: 1 }, grid: { color: '#2e3442' } },
+      },
+      plugins: { legend: { labels: { color: '#e8eaf0' } } },
+    },
+  });
+}
 function drawChart() {
+  drawWeeksChart();
   const cv = document.getElementById('chart');
   if (!cv || !window.Chart) return;
   const equip = exerciseEquip(progressEx);
@@ -551,23 +755,47 @@ function viewPlan() {
           <button class="btn sm danger" onclick="app.removeDay('${d.id}')">🗑️</button></div>` : ''}</div>
         <div class="chips">${WEEKDAYS.map((w, i) =>
           `<span class="chip ${d.weekdays.includes(i) ? 'on' : ''}" ${planEdit ? `onclick="app.toggleWeekday('${d.id}',${i})"` : ''}>${w}</span>`).join('')}</div>
-        ${d.exercises.map(e => `
+        ${d.type === 'cardio'
+          ? `<p class="muted small">🏃 Treino de corrida — ao registar indicas os minutos e a distância.${d.targetMinutes ? ` Alvo: ~${d.targetMinutes} min.` : ''}</p>
+             ${planEdit ? `<button class="btn sm ghost" onclick="app.setCardioTarget('${d.id}')">Definir duração alvo</button>` : ''}`
+          : `${d.exercises.map(e => `
           <div class="plan-ex">
             <div class="info"><b>${esc(e.name)}</b> <span class="badge">${EQUIPS[e.equip]?.label || e.equip}</span>
               <div>${repsLabel(e)} · ${weightsLabel(e)}</div></div>
             ${planEdit ? `<div><button class="btn sm" onclick="app.editExercise('${d.id}','${e.id}')">✏️</button>
             <button class="btn sm danger" onclick="app.removeExercise('${d.id}','${e.id}')">✕</button></div>` : ''}
           </div>`).join('')}
-        ${planEdit ? `<button class="btn sm block ghost" style="margin-top:10px" onclick="app.editExercise('${d.id}',null)">+ Adicionar exercício</button>` : ''}
+        ${planEdit ? `<button class="btn sm block ghost" style="margin-top:10px" onclick="app.editExercise('${d.id}',null)">+ Adicionar exercício</button>` : ''}`}
       </div>`).join('')}
     ${planEdit ? `<button class="btn block" onclick="app.addDay()">+ Adicionar treino</button>` : ''}`;
 }
 function togglePlanEdit() { planEdit = !planEdit; render(); }
-function addDay() {
-  const name = prompt('Nome do treino (ex: Dia D — Ombros):');
-  if (!name) return;
-  state.plan.days.push({ id: uid(), name, weekdays: [], exercises: [] });
+function setCardioTarget(dayId) {
+  const d = state.plan.days.find(x => x.id === dayId);
+  const v = prompt('Duração alvo da corrida (minutos):', d.targetMinutes || 25);
+  if (v === null) return;
+  d.targetMinutes = parseInt(v) || 0;
   save(); render();
+}
+function addDay() {
+  openModal(`<h3>Novo treino</h3>
+    <div class="form-grid">
+      <label class="full">Nome<input id="d-name" placeholder="Dia D — Ombros / Corrida longa"></label>
+      <label class="full">Tipo
+        <select id="d-type">
+          <option value="gym">🏋️ Ginásio (exercícios e séries)</option>
+          <option value="cardio">🏃 Corrida / cardio (minutos e km)</option>
+        </select></label>
+    </div>
+    <div class="btnrow"><button class="btn" onclick="app.closeModal()">Cancelar</button>
+    <button class="btn primary" onclick="app.saveDay()">Criar</button></div>`);
+}
+function saveDay() {
+  const name = document.getElementById('d-name').value.trim();
+  if (!name) { alert('Dá um nome ao treino.'); return; }
+  const type = document.getElementById('d-type').value;
+  state.plan.days.push({ id: uid(), name, type, weekdays: [], exercises: [], ...(type === 'cardio' ? { targetMinutes: 25 } : {}) });
+  save(); closeModal(); render();
 }
 function renameDay(id) {
   const d = state.plan.days.find(x => x.id === id);
@@ -644,6 +872,18 @@ function removeExercise(dayId, exId) {
 /* ---------------- vista: DEFINIÇÕES ---------------- */
 function viewSettings() {
   return `<h1>Definições</h1><p class="sub">Dados e preferências</p>
+    <div class="card"><h3>☁️ Sincronização</h3>
+      <p class="muted">Liga os teus dispositivos à mesma base de dados (Supabase) — o que registas num aparece no outro. Estado: <b id="sync-status">${syncLabel()}</b></p>
+      ${syncCfg
+        ? `<div class="btnrow">
+            <button class="btn" onclick="app.syncNow()">Sincronizar agora</button>
+            <button class="btn danger" onclick="app.disconnectSync()">Desligar</button></div>`
+        : `<div class="form-grid">
+            <label class="full">URL do projeto<input id="s-url" placeholder="https://xxxx.supabase.co"></label>
+            <label class="full">Chave anon (public)<input id="s-key" placeholder="eyJ…"></label>
+          </div>
+          <button class="btn primary block" onclick="app.connectSync()">Ligar e sincronizar</button>`}
+    </div>
     <div class="card"><h3>⏱️ Descanso entre séries</h3>
       <p class="muted">Segundos de descanso quando marcas uma série como feita.</p>
       <select onchange="app.setRest(this.value)">${[60, 90, 120, 150, 180].map(s =>
@@ -660,7 +900,7 @@ function viewSettings() {
     <div class="card"><h3>🗑️ Apagar tudo</h3>
       <p class="muted">Remove todos os dados (plano e histórico) deste dispositivo e repõe o plano inicial.</p>
       <button class="btn danger" onclick="app.resetAll()">Apagar todos os dados</button></div>
-    <p class="muted small" style="text-align:center">GymTrack v2.3</p>`;
+    <p class="muted small" style="text-align:center">GymTrack v3.0</p>`;
 }
 function setRest(v) { state.settings.restSeconds = parseInt(v); save(); }
 function exportData() {
@@ -679,7 +919,7 @@ function importData(input) {
     try {
       const data = JSON.parse(reader.result);
       if (!data.plan || !Array.isArray(data.history)) throw new Error('formato inválido');
-      state = data; save(); render();
+      state = migrate(data); save(); render();
       alert('Dados importados com sucesso ✓');
     } catch (e) { alert('Ficheiro inválido: ' + e.message); }
   };
@@ -709,11 +949,14 @@ document.getElementById('modal-backdrop').addEventListener('click', e => {
 });
 window.app = {
   startWorkout, setField, toggleSet, setFeedback, setExNote, setNotes, cancelWorkout, finishWorkout,
-  stopRestTimer, calMove, showWorkout, pickExercise, togglePlanEdit, renameDay, removeDay, addDay,
-  toggleWeekday, editExercise, equipChanged, saveExercise, removeExercise, setRest,
+  stopRestTimer, calMove, showWorkout, pickExercise, togglePlanEdit, renameDay, removeDay, addDay, saveDay,
+  toggleWeekday, editExercise, equipChanged, saveExercise, removeExercise, setCardioTarget, setRest,
+  logCardio, saveCardio, showCoachNotes,
+  connectSync, disconnectSync, syncNow: syncStart,
   exportData, importData, resetAll, closeModal,
 };
 render();
+if (syncCfg) syncStart();
 
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
   navigator.serviceWorker.register('sw.js').catch(() => {});
