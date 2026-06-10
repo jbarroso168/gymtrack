@@ -551,7 +551,7 @@ function viewPlan() {
         ${d.exercises.map(e => `
           <div class="plan-ex">
             <div class="info"><b>${esc(e.name)}</b> <span class="badge">${EQUIPS[e.equip]?.label || e.equip}</span>
-              <div>${repsLabel(e)} · ${weightsLabel(e)}${e.lastAdj ? `<br><span style="color:var(--info)">💡 ${esc(e.lastAdj)}</span>` : ''}</div></div>
+              <div>${repsLabel(e)} · ${weightsLabel(e)}</div></div>
             <div><button class="btn sm" onclick="app.editExercise('${d.id}','${e.id}')">✏️</button>
             <button class="btn sm danger" onclick="app.removeExercise('${d.id}','${e.id}')">✕</button></div>
           </div>`).join('')}
