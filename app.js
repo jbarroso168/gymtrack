@@ -247,9 +247,12 @@ function updateSyncUi() {
   if (el) el.textContent = syncLabel();
 }
 function connectSync() {
-  const url = document.getElementById('s-url').value.trim().replace(/\/+$/, '');
+  // aceitar URLs colados com /rest/v1/, barras finais ou espaços
+  const url = document.getElementById('s-url').value.trim()
+    .replace(/\/rest\/v1.*$/, '')
+    .replace(/\/+$/, '');
   const key = document.getElementById('s-key').value.trim();
-  if (!/^https:\/\/.+\.supabase\.co$/.test(url) || !key) { alert('Confirma o URL (https://xxxx.supabase.co) e a chave anon.'); return; }
+  if (!/^https:\/\/[a-z0-9-]+\.supabase\.co$/.test(url) || !key) { alert('Confirma o URL (https://xxxx.supabase.co) e a chave.'); return; }
   syncCfg = { url, key, id: 'joao' };
   localStorage.setItem('gymtrack-sync', JSON.stringify(syncCfg));
   render();
