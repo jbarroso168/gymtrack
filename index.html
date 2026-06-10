@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>GymTrack</title>
+<meta name="theme-color" content="#0f1115">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="GymTrack">
+<link rel="stylesheet" href="styles.css">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head>
+<body>
+<div class="layout">
+  <nav id="tabs">
+    <div class="brand">🏋️ <span>GymTrack</span></div>
+    <button data-route="today" class="active"><span class="ico">💪</span><span class="lbl">Hoje</span></button>
+    <button data-route="calendar"><span class="ico">📅</span><span class="lbl">Calendário</span></button>
+    <button data-route="progress"><span class="ico">📈</span><span class="lbl">Progresso</span></button>
+    <button data-route="plan"><span class="ico">📋</span><span class="lbl">Plano</span></button>
+    <button data-route="settings"><span class="ico">⚙️</span><span class="lbl">Mais</span></button>
+  </nav>
+  <main id="view"></main>
+</div>
+<div id="timerbar" class="hidden"></div>
+<div id="modal-backdrop" class="hidden"><div id="modal"></div></div>
+<script src="app.js"></script>
+</body>
+</html>
