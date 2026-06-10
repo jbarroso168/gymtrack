@@ -154,6 +154,20 @@ function defaultState() {
 }
 
 /* ---------------- store ---------------- */
+// remove duplicados: mesmo treino (data+nome) registado com ids diferentes
+// (acontecia quando dois dispositivos arrancavam com o mesmo seed antes do sync)
+function dedupeHistory(list) {
+  const map = new Map();
+  for (const h of list || []) {
+    const k = h.type === 'cardio'
+      ? `${h.date}|${h.name}|${h.minutes || 0}|${h.km || 0}`
+      : `${h.date}|${h.name}`;
+    const score = (h.exercises || []).reduce((t, e) => t + (e.sets || []).filter(st => st.done).length, 0);
+    const prev = map.get(k);
+    if (!prev || score > prev.score) map.set(k, { h, score });
+  }
+  return [...map.values()].map(x => x.h).sort((a, b) => a.date < b.date ? -1 : 1);
+}
 function migrate(s) {
   s.version = 3;
   s.updatedAt = s.updatedAt || new Date().toISOString();
@@ -164,6 +178,8 @@ function migrate(s) {
   s.history.forEach(h => {
     if (!h.type) h.type = (!h.exercises || !h.exercises.length) && /corrida|cardio/i.test(h.name) ? 'cardio' : 'gym';
   });
+  s.deleted = s.deleted || []; // ids de treinos eliminados (para a eliminação propagar entre dispositivos)
+  s.history = dedupeHistory(s.history.filter(h => !s.deleted.includes(h.id)));
   return s;
 }
 let state = load();
@@ -219,15 +235,18 @@ function schedulePush() {
 function mergeStates(local, remote) {
   if (!remote) return local;
   const base = (remote.updatedAt || '') > (local.updatedAt || '') ? remote : local;
+  const deleted = [...new Set([...(local.deleted || []), ...(remote.deleted || [])])];
   const seen = new Set();
-  const history = [...(local.history || []), ...(remote.history || [])]
-    .filter(h => seen.has(h.id) ? false : (seen.add(h.id), true))
-    .sort((a, b) => a.date < b.date ? -1 : 1);
+  const history = dedupeHistory(
+    [...(local.history || []), ...(remote.history || [])]
+      .filter(h => !deleted.includes(h.id))
+      .filter(h => seen.has(h.id) ? false : (seen.add(h.id), true))
+  );
   const seenN = new Set();
   const coachNotes = [...(local.coachNotes || []), ...(remote.coachNotes || [])]
     .filter(n => { const k = n.date + '|' + n.text; return seenN.has(k) ? false : (seenN.add(k), true); })
     .sort((a, b) => a.date < b.date ? -1 : 1);
-  const merged = { ...base, history, coachNotes };
+  const merged = { ...base, history, coachNotes, deleted };
   if (local.activeSession) merged.activeSession = local.activeSession; // nunca perder treino em curso
   return merged;
 }
@@ -621,7 +640,8 @@ function showWorkout(id) {
       </div>
       ${pace ? `<p class="muted">Ritmo: ${Math.floor(pace)}:${String(Math.round((pace % 1) * 60)).padStart(2, '0')} min/km</p>` : ''}
       ${h.notes ? `<p class="muted">📝 ${esc(h.notes)}</p>` : ''}
-      <button class="btn block" style="margin-top:8px" onclick="app.closeModal()">Fechar</button>`);
+      <div class="btnrow"><button class="btn danger" onclick="app.deleteWorkout('${h.id}')">🗑️ Eliminar</button>
+      <button class="btn" onclick="app.closeModal()">Fechar</button></div>`);
     return;
   }
   const vol = volume(h);
@@ -630,7 +650,17 @@ function showWorkout(id) {
       <span class="muted">${sx.sets.filter(s => s.done).map(s => setDisplay(sx, s)).join(' · ') || 'sem detalhe registado'}</span>
       ${sx.note ? `<br><span class="muted small">📝 ${esc(sx.note)}</span>` : ''}</div>`).join('')}
     ${h.notes ? `<p class="muted">📝 ${esc(h.notes)}</p>` : ''}
-    <button class="btn block" style="margin-top:14px" onclick="app.closeModal()">Fechar</button>`);
+    <div class="btnrow" style="margin-top:14px"><button class="btn danger" onclick="app.deleteWorkout('${h.id}')">🗑️ Eliminar</button>
+    <button class="btn" onclick="app.closeModal()">Fechar</button></div>`);
+}
+function deleteWorkout(id) {
+  const h = state.history.find(x => x.id === id);
+  if (!h) return;
+  if (!confirm(`Eliminar "${h.name}" de ${fmtDate(h.date)}? Esta ação propaga-se a todos os dispositivos.`)) return;
+  state.history = state.history.filter(x => x.id !== id);
+  state.deleted = state.deleted || [];
+  state.deleted.push(id);
+  save(); closeModal(); render();
 }
 function volume(h) {
   return Math.round(h.exercises.reduce((t, sx) =>
@@ -772,7 +802,9 @@ function viewPlan() {
           <div class="plan-ex">
             <div class="info"><b>${esc(e.name)}</b> <span class="badge">${EQUIPS[e.equip]?.label || e.equip}</span>
               <div>${repsLabel(e)} · ${weightsLabel(e)}</div></div>
-            ${planEdit ? `<div><button class="btn sm" onclick="app.editExercise('${d.id}','${e.id}')">✏️</button>
+            ${planEdit ? `<div><button class="btn sm" onclick="app.moveExercise('${d.id}','${e.id}',-1)">↑</button>
+            <button class="btn sm" onclick="app.moveExercise('${d.id}','${e.id}',1)">↓</button>
+            <button class="btn sm" onclick="app.editExercise('${d.id}','${e.id}')">✏️</button>
             <button class="btn sm danger" onclick="app.removeExercise('${d.id}','${e.id}')">✕</button></div>` : ''}
           </div>`).join('')}
         ${planEdit ? `<button class="btn sm block ghost" style="margin-top:10px" onclick="app.editExercise('${d.id}',null)">+ Adicionar exercício</button>` : ''}`}
@@ -878,6 +910,14 @@ function removeExercise(dayId, exId) {
   d.exercises = d.exercises.filter(e => e.id !== exId);
   save(); render();
 }
+function moveExercise(dayId, exId, dir) {
+  const d = state.plan.days.find(x => x.id === dayId);
+  const i = d.exercises.findIndex(e => e.id === exId);
+  const j = i + dir;
+  if (i < 0 || j < 0 || j >= d.exercises.length) return;
+  [d.exercises[i], d.exercises[j]] = [d.exercises[j], d.exercises[i]];
+  save(); render();
+}
 
 /* ---------------- vista: DEFINIÇÕES ---------------- */
 function viewSettings() {
@@ -910,7 +950,7 @@ function viewSettings() {
     <div class="card"><h3>🗑️ Apagar tudo</h3>
       <p class="muted">Remove todos os dados (plano e histórico) deste dispositivo e repõe o plano inicial.</p>
       <button class="btn danger" onclick="app.resetAll()">Apagar todos os dados</button></div>
-    <p class="muted small" style="text-align:center">GymTrack v3.0</p>`;
+    <p class="muted small" style="text-align:center">GymTrack v3.1</p>`;
 }
 function setRest(v) { state.settings.restSeconds = parseInt(v); save(); }
 function exportData() {
@@ -960,7 +1000,7 @@ document.getElementById('modal-backdrop').addEventListener('click', e => {
 window.app = {
   startWorkout, setField, toggleSet, setFeedback, setExNote, setNotes, cancelWorkout, finishWorkout,
   stopRestTimer, calMove, showWorkout, pickExercise, togglePlanEdit, renameDay, removeDay, addDay, saveDay,
-  toggleWeekday, editExercise, equipChanged, saveExercise, removeExercise, setCardioTarget, setRest,
+  toggleWeekday, editExercise, equipChanged, saveExercise, removeExercise, moveExercise, deleteWorkout, setCardioTarget, setRest,
   logCardio, saveCardio, showCoachNotes,
   connectSync, disconnectSync, syncNow: syncStart,
   exportData, importData, resetAll, closeModal,
