@@ -796,8 +796,8 @@ function drawChart() {
       data: {
         labels: runs.map(r => fmtDate(r.date)),
         datasets: [
-          { type: 'bar', label: 'Distância (km)', data: runs.map(r => r.km || null), backgroundColor: '#2563eb', borderRadius: 4, yAxisID: 'y' },
           { type: 'line', label: 'Ritmo (min/km)', data: runs.map(r => r.km && r.minutes ? +(r.minutes / r.km).toFixed(2) : null), borderColor: '#4ade80', backgroundColor: '#4ade8033', tension: .3, yAxisID: 'y1' },
+          { type: 'bar', label: 'Distância (km)', data: runs.map(r => r.km || null), backgroundColor: '#2563eb', borderRadius: 4, yAxisID: 'y' },
         ],
       },
       options: {
@@ -1085,7 +1085,7 @@ function viewSettings() {
     <div class="card"><h3>🗑️ Apagar tudo</h3>
       <p class="muted">Remove todos os dados (plano e histórico) deste dispositivo e repõe o plano inicial.</p>
       <button class="btn danger" onclick="app.resetAll()">Apagar todos os dados</button></div>
-    <p class="muted small" style="text-align:center">GymTrack v4.0</p>`;
+    <p class="muted small" style="text-align:center">GymTrack v4.1</p>`;
 }
 function setRest(v) { state.settings.restSeconds = parseInt(v); save(); }
 function exportData() {
