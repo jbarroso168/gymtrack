@@ -26,6 +26,7 @@ const hasWeight = equip => equip !== 'corpo' && equip !== 'tempo';
 const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 const todayKey = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 const fmtDate = iso => new Date(iso + 'T12:00:00').toLocaleDateString('pt-PT', { weekday: 'short', day: 'numeric', month: 'short' });
+const fmtDateShort = iso => new Date(iso + 'T12:00:00').toLocaleDateString('pt-PT', { day: '2-digit', month: '2-digit' });
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const roundStep = (n, step) => step ? Math.round(n / step) * step : n;
 
@@ -794,7 +795,7 @@ function drawChart() {
     if (!runs.length) return;
     chart = new Chart(cv, {
       data: {
-        labels: runs.map(r => fmtDate(r.date)),
+        labels: runs.map(r => fmtDateShort(r.date)),
         datasets: [
           { type: 'line', label: 'Ritmo (min/km)', data: runs.map(r => r.km && r.minutes ? +(r.minutes / r.km).toFixed(2) : null), borderColor: '#4ade80', backgroundColor: '#4ade8033', tension: .3, yAxisID: 'y1' },
           { type: 'bar', label: 'Distância (km)', data: runs.map(r => r.km || null), backgroundColor: '#2563eb', borderRadius: 4, yAxisID: 'y' },
@@ -829,7 +830,7 @@ function drawChart() {
   chart = new Chart(cv, {
     type: 'line',
     data: {
-      labels: points.map(p => fmtDate(p.date)),
+      labels: points.map(p => fmtDateShort(p.date)),
       datasets: [
         { label: equip === 'tempo' ? 'Tempo máx (s)' : equip === 'corpo' ? 'Reps máx' : `Carga máx (${unit})`, data: points.map(p => p.max), borderColor: '#4ade80', backgroundColor: '#4ade8033', tension: .3, yAxisID: 'y' },
         { label: 'Volume da sessão', data: points.map(p => p.vol), borderColor: '#60a5fa', backgroundColor: '#60a5fa22', tension: .3, yAxisID: 'y1' },
@@ -1040,7 +1041,7 @@ function drawWeightChart() {
   chartH = new Chart(cv, {
     type: 'line',
     data: {
-      labels: ws.map(w => fmtDate(w.date)),
+      labels: ws.map(w => fmtDateShort(w.date)),
       datasets: [{ label: 'Peso (kg)', data: ws.map(w => w.kg), borderColor: '#f472b6', backgroundColor: '#f472b633', tension: .3, fill: true }],
     },
     options: {
@@ -1085,7 +1086,7 @@ function viewSettings() {
     <div class="card"><h3>🗑️ Apagar tudo</h3>
       <p class="muted">Remove todos os dados (plano e histórico) deste dispositivo e repõe o plano inicial.</p>
       <button class="btn danger" onclick="app.resetAll()">Apagar todos os dados</button></div>
-    <p class="muted small" style="text-align:center">GymTrack v4.1</p>`;
+    <p class="muted small" style="text-align:center">GymTrack v4.2</p>`;
 }
 function setRest(v) { state.settings.restSeconds = parseInt(v); save(); }
 function exportData() {
