@@ -1004,8 +1004,8 @@ function viewHealth() {
         <button class="btn primary" onclick="app.addWeight()">Guardar</button>
       </div>
       ${last ? `<div class="stats" style="margin-top:14px;grid-template-columns:1fr 1fr">
-        <div class="stat"><div class="v">${last.kg}</div><div class="l">kg · ${fmtDate(last.date)}</div></div>
-        <div class="stat"><div class="v">${diff === null ? '—' : (diff > 0 ? '+' : '') + diff}</div><div class="l">kg desde ${first ? fmtDate(first.date) : '—'}</div></div>
+        <div class="stat"><div class="v">${last.kg}</div><div class="l">kg · ${fmtDateShort(last.date)}</div></div>
+        <div class="stat"><div class="v">${diff === null ? '—' : (diff > 0 ? '+' : '') + diff}</div><div class="l">kg desde ${first ? fmtDateShort(first.date) : '—'}</div></div>
       </div>` : '<p class="muted" style="margin-top:12px">Regista o teu primeiro peso para começares a acompanhar.</p>'}
       ${ws.length ? `<div class="chart-wrap" style="margin-top:12px"><canvas id="chart-weight" height="200"></canvas></div>` : ''}
       ${ws.length ? `<div style="margin-top:10px">${ws.slice(-5).reverse().map(w => `
@@ -1086,7 +1086,7 @@ function viewSettings() {
     <div class="card"><h3>🗑️ Apagar tudo</h3>
       <p class="muted">Remove todos os dados (plano e histórico) deste dispositivo e repõe o plano inicial.</p>
       <button class="btn danger" onclick="app.resetAll()">Apagar todos os dados</button></div>
-    <p class="muted small" style="text-align:center">GymTrack v4.2</p>`;
+    <p class="muted small" style="text-align:center">GymTrack v4.3</p>`;
 }
 function setRest(v) { state.settings.restSeconds = parseInt(v); save(); }
 function exportData() {
