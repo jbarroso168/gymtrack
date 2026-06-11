@@ -81,7 +81,7 @@ function defaultState() {
           ex('Triceps Pushdown (corda)', 'maquina', 4, 10, 15, [3, 4, 4, 5], 1),
           ex('DB Chest Fly (aberturas)', 'halteres', 3, 10, 12, [8, 8, 8], 2, 'Novo — calibrar carga no 1.º treino'),
         ]},
-        { id: 'dR', name: 'Corrida', type: 'cardio', weekdays: [], targetMinutes: 25, exercises: [] },
+        { id: 'dR', name: 'Corrida', type: 'cardio', weekdays: [], targetKm: 3, exercises: [] },
         { id: 'dC', name: 'Dia C — Misto', weekdays: [5], exercises: [
           ex('DB Bulgarian Split Squat', 'halteres', 3, 8, 8, [8, 8, 8], 2, 'Manter enquanto o isquio recupera'),
           ex('Incline DB Press', 'halteres', 4, 10, 12, [8, 10, 12, 12], 2, 'Consolidar 12 kg (última cortou às 6)'),
@@ -181,12 +181,17 @@ function migrate(s) {
   s.version = 3;
   s.updatedAt = s.updatedAt || new Date().toISOString();
   s.coachNotes = dedupeNotes(s.coachNotes || []);
-  s.plan.days.forEach(d => { d.type = d.type || 'gym'; d.exercises = d.exercises || []; });
+  s.plan.days.forEach(d => {
+    d.type = d.type || 'gym';
+    d.exercises = d.exercises || [];
+    if (d.type === 'cardio' && d.targetKm == null) d.targetKm = 3;
+  });
   if (!s.plan.days.some(d => d.type === 'cardio'))
-    s.plan.days.push({ id: 'dR', name: 'Corrida', type: 'cardio', weekdays: [], targetMinutes: 25, exercises: [] });
+    s.plan.days.push({ id: 'dR', name: 'Corrida', type: 'cardio', weekdays: [], targetKm: 3, exercises: [] });
   s.history.forEach(h => {
     if (!h.type) h.type = (!h.exercises || !h.exercises.length) && /corrida|cardio/i.test(h.name) ? 'cardio' : 'gym';
   });
+  s.health = s.health || { weights: [] }; // registos de peso: {date, kg, t} (t = timestamp p/ merge; kg null = apagado)
   s.deleted = s.deleted || []; // ids de treinos eliminados (para a eliminação propagar entre dispositivos)
   s.history = dedupeHistory(s.history.filter(h => !s.deleted.includes(h.id)));
   return s;
@@ -252,7 +257,14 @@ function mergeStates(local, remote) {
       .filter(h => seen.has(h.id) ? false : (seen.add(h.id), true))
   );
   const coachNotes = dedupeNotes([...(local.coachNotes || []), ...(remote.coachNotes || [])]);
-  const merged = { ...base, history, coachNotes, deleted };
+  // peso: um registo por dia, ganha o mais recente (t); kg null = apagado nesse dia
+  const wMap = new Map();
+  for (const w of [...((local.health || {}).weights || []), ...((remote.health || {}).weights || [])]) {
+    const prev = wMap.get(w.date);
+    if (!prev || (w.t || 0) > (prev.t || 0)) wMap.set(w.date, w);
+  }
+  const health = { weights: [...wMap.values()].sort((a, b) => a.date < b.date ? -1 : 1) };
+  const merged = { ...base, history, coachNotes, deleted, health };
   if (local.activeSession) merged.activeSession = local.activeSession; // nunca perder treino em curso
   return merged;
 }
@@ -307,8 +319,9 @@ function render() {
     b.classList.toggle('active', b.dataset.route === route));
   const v = document.getElementById('view');
   if (state.activeSession && route === 'today') v.innerHTML = viewSession();
-  else v.innerHTML = ({ today: viewToday, calendar: viewCalendar, progress: viewProgress, plan: viewPlan, settings: viewSettings }[route])();
+  else v.innerHTML = ({ today: viewToday, calendar: viewCalendar, progress: viewProgress, health: viewHealth, plan: viewPlan, settings: viewSettings }[route])();
   if (route === 'progress') drawChart();
+  if (route === 'health') drawWeightChart();
 }
 
 /* ---------------- vista: HOJE ---------------- */
@@ -358,7 +371,7 @@ function dayCard(day, suggested) {
     return `<div class="card ${suggested ? 'highlight' : ''}">
       <div class="row"><div>
         <h3>${suggested ? '⭐ ' : ''}🏃 ${esc(day.name)}</h3>
-        <p class="muted">${day.targetMinutes ? `~${day.targetMinutes} min · ` : ''}${day.weekdays.map(w => WEEKDAYS[w]).join(', ') || 'quando quiseres'}</p>
+        <p class="muted">${day.targetKm ? `~${day.targetKm} km · ` : ''}${day.weekdays.map(w => WEEKDAYS[w]).join(', ') || 'quando quiseres'}</p>
       </div>
       <button class="btn ${suggested ? 'primary' : ''}" onclick="app.logCardio()">Registar</button></div>
     </div>`;
@@ -590,24 +603,20 @@ function viewCalendar() {
     const key = todayKey(new Date(m.getFullYear(), m.getMonth(), d));
     const trained = byDate[key];
     const isToday = key === todayKey();
-    const onlyCardio = trained && trained.every(h => h.type === 'cardio');
-    cells += `<div class="cal-day ${trained ? (onlyCardio ? 'cardio' : 'trained') : ''} ${isToday ? 'today' : ''}"
-      ${trained ? `onclick="app.showWorkout('${trained[0].id}')"` : ''}>
+    const hasGym = trained && trained.some(h => h.type !== 'cardio');
+    const hasRun = trained && trained.some(h => h.type === 'cardio');
+    const cls = trained ? (hasGym && hasRun ? 'mixed' : (hasRun ? 'cardio' : 'trained')) : '';
+    cells += `<div class="cal-day ${cls} ${isToday ? 'today' : ''}"
+      ${trained ? `onclick="app.showDay('${key}')"` : ''}>
       ${d}${trained ? '<span class="dot">●</span>' : ''}</div>`;
   }
-  const inMonth = state.history.filter(h => h.date.startsWith(`${m.getFullYear()}-${String(m.getMonth() + 1).padStart(2, '0')}`)).length;
-
   return `<h1>Calendário</h1><p class="sub">Os teus dias de treino</p>
     <div class="cal-head">
       <button class="btn sm" onclick="app.calMove(-1)">‹</button>
       <b style="text-transform:capitalize">${monthName}</b>
       <button class="btn sm" onclick="app.calMove(1)">›</button>
     </div>
-    <div class="cal-grid">${cells}</div>
-    <div class="stats" style="margin-top:16px">
-      <div class="stat"><div class="v">${inMonth}</div><div class="l">treinos este mês</div></div>
-      <div class="stat"><div class="v">${streak()}</div><div class="l">semanas seguidas a treinar</div></div>
-    </div>`;
+    <div class="cal-grid">${cells}</div>`;
 }
 function calMove(n) { calOffset += n; render(); }
 function streak() {
@@ -633,6 +642,21 @@ function setDisplay(sx, st) {
   if (sx.equip === 'corpo') return `×${st.reps}`;
   if (sx.equip === 'maquina') return `nív.${st.weight}×${st.reps}`;
   return `${st.weight}kg×${st.reps}`;
+}
+function showDay(dateKey) {
+  const entries = state.history.filter(h => h.date === dateKey);
+  if (!entries.length) return;
+  if (entries.length === 1) { showWorkout(entries[0].id); return; }
+  openModal(`<h3>${fmtDate(dateKey)}</h3><p class="muted">${entries.length} treinos neste dia</p>
+    ${entries.map(h => {
+      const desc = h.type === 'cardio'
+        ? [h.minutes ? `${h.minutes} min` : '', h.km ? `${h.km} km` : ''].filter(Boolean).join(' · ')
+        : `${h.exercises.length} exercícios`;
+      return `<div class="summary-item row"><div><b>${h.type === 'cardio' ? '🏃' : '🏋️'} ${esc(h.name)}</b><br>
+        <span class="muted">${desc}</span></div>
+        <button class="btn sm" onclick="app.showWorkout('${h.id}')">Ver</button></div>`;
+    }).join('')}
+    <button class="btn block" style="margin-top:14px" onclick="app.closeModal()">Fechar</button>`);
 }
 function showWorkout(id) {
   const h = state.history.find(x => x.id === id);
@@ -681,11 +705,18 @@ function exerciseEquip(name) {
   for (const h of state.history) { const e = h.exercises.find(x => x.name === name); if (e) return e.equip; }
   return 'halteres';
 }
+const CORRIDA = '🏃 Corrida';
 function allExerciseNames() {
   const names = new Set();
   state.plan.days.forEach(d => d.exercises.forEach(e => names.add(e.name)));
   state.history.forEach(h => h.exercises.forEach(e => names.add(e.name)));
-  return [...names];
+  return [CORRIDA, ...names];
+}
+function isoWeek(d0) {
+  const d = new Date(d0.getFullYear(), d0.getMonth(), d0.getDate(), 12);
+  d.setDate(d.getDate() + 3 - ((d.getDay() + 6) % 7));
+  const week1 = new Date(d.getFullYear(), 0, 4, 12);
+  return 1 + Math.round(((d - week1) / 86400000 - 3 + ((week1.getDay() + 6) % 7)) / 7);
 }
 function weekMonday(offsetWeeks = 0) {
   const d = new Date();
@@ -704,7 +735,8 @@ function viewProgress() {
   const gym30 = state.history.filter(h => h.type !== 'cardio' && days30(h)).length;
   const runs30 = state.history.filter(h => h.type === 'cardio' && days30(h));
   const km30 = runs30.reduce((t, h) => t + (h.km || 0), 0);
-  const unit = EQUIPS[exerciseEquip(progressEx)]?.unit || 'kg';
+  const isRun = progressEx === CORRIDA;
+  const unit = isRun ? 'km' : (EQUIPS[exerciseEquip(progressEx)]?.unit || 'kg');
   return `<h1>Progresso</h1><p class="sub">A tua evolução ao longo do tempo</p>
     <h2 style="margin-top:4px">Visão geral</h2>
     <div class="stats">
@@ -714,11 +746,13 @@ function viewProgress() {
       <div class="stat"><div class="v">${streak()}</div><div class="l">semanas seguidas ativas</div></div>
     </div>
     <div class="chart-wrap"><canvas id="chart-weeks" height="180"></canvas></div>
-    <p class="muted small" style="margin-top:8px">Treinos por semana (últimas 8): verde ginásio · azul corrida</p>
+    <p class="muted small" style="margin-top:8px">Treinos por semana (número da semana): verde ginásio · azul corrida</p>
     <h2>Por exercício</h2>
     <select onchange="app.pickExercise(this.value)">${names.map(n => `<option ${n === progressEx ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select>
     <div class="chart-wrap"><canvas id="chart" height="220"></canvas></div>
-    <p class="muted small" style="margin-top:8px">Linha verde: carga máxima por sessão (${unit}) · Linha azul: volume da sessão</p>`;
+    <p class="muted small" style="margin-top:8px">${isRun
+      ? 'Barras azuis: km por corrida · Linha verde: ritmo (min/km, mais baixo = melhor)'
+      : `Linha verde: carga máxima por sessão (${unit}) · Linha azul: volume da sessão`}</p>`;
 }
 function pickExercise(n) { progressEx = n; render(); }
 let chartW = null;
@@ -729,7 +763,7 @@ function drawWeeksChart() {
   for (let i = 7; i >= 0; i--) {
     const mon = weekMonday(i);
     const wk = todayKey(mon);
-    labels.push(mon.toLocaleDateString('pt-PT', { day: 'numeric', month: 'numeric' }));
+    labels.push(String(isoWeek(mon)));
     gymC.push(state.history.filter(h => h.type !== 'cardio' && weekKeyOf(h.date) === wk).length);
     runC.push(state.history.filter(h => h.type === 'cardio' && weekKeyOf(h.date) === wk).length);
   }
@@ -754,6 +788,30 @@ function drawChart() {
   drawWeeksChart();
   const cv = document.getElementById('chart');
   if (!cv || !window.Chart) return;
+  if (progressEx === CORRIDA) {
+    const runs = state.history.filter(h => h.type === 'cardio' && (h.km || h.minutes));
+    if (chart) { chart.destroy(); chart = null; }
+    if (!runs.length) return;
+    chart = new Chart(cv, {
+      data: {
+        labels: runs.map(r => fmtDate(r.date)),
+        datasets: [
+          { type: 'bar', label: 'Distância (km)', data: runs.map(r => r.km || null), backgroundColor: '#2563eb', borderRadius: 4, yAxisID: 'y' },
+          { type: 'line', label: 'Ritmo (min/km)', data: runs.map(r => r.km && r.minutes ? +(r.minutes / r.km).toFixed(2) : null), borderColor: '#4ade80', backgroundColor: '#4ade8033', tension: .3, yAxisID: 'y1' },
+        ],
+      },
+      options: {
+        responsive: true,
+        scales: {
+          y: { ticks: { color: '#9aa3b5' }, grid: { color: '#2e3442' }, title: { display: true, text: 'km', color: '#9aa3b5' } },
+          y1: { position: 'right', ticks: { color: '#9aa3b5' }, grid: { display: false }, title: { display: true, text: 'min/km', color: '#9aa3b5' } },
+          x: { ticks: { color: '#9aa3b5' }, grid: { display: false } },
+        },
+        plugins: { legend: { labels: { color: '#e8eaf0' } } },
+      },
+    });
+    return;
+  }
   const equip = exerciseEquip(progressEx);
   const unit = EQUIPS[equip]?.unit || 'kg';
   const points = state.history
@@ -792,27 +850,29 @@ function drawChart() {
 /* ---------------- vista: PLANO ---------------- */
 function viewPlan() {
   return `<div class="row"><h1>Plano de treino</h1>
-      <button class="btn sm ${planEdit ? 'primary' : ''}" onclick="app.togglePlanEdit()">${planEdit ? '✓ Concluir' : '✏️ Editar plano'}</button></div>
-    <p class="sub">Full Body 3×/semana · Mesociclo 1 (readaptação)${planEdit ? ' · modo de edição' : ''}</p>
+      <button class="btn sm ${planEdit ? 'primary' : ''}" onclick="app.togglePlanEdit()">${planEdit ? '✓ Concluir' : '✏️ Editar'}</button></div>
+    <p class="sub">Full Body 3×/semana${planEdit ? ' · modo de edição' : ''}</p>
     ${state.plan.days.map(d => `
-      <div class="card">
-        <div class="row"><h3>${esc(d.name)}</h3>
-          ${planEdit ? `<div><button class="btn sm" onclick="app.renameDay('${d.id}')">✏️</button>
-          <button class="btn sm danger" onclick="app.removeDay('${d.id}')">🗑️</button></div>` : ''}</div>
-        <div class="chips">${WEEKDAYS.map((w, i) =>
-          `<span class="chip ${d.weekdays.includes(i) ? 'on' : ''}" ${planEdit ? `onclick="app.toggleWeekday('${d.id}',${i})"` : ''}>${w}</span>`).join('')}</div>
+      <div class="card plan-day ${d.type === 'cardio' ? 'is-cardio' : ''}">
+        <div class="row plan-head">
+          <h3>${d.type === 'cardio' ? '🏃' : '🏋️'} ${esc(d.name)}</h3>
+          ${planEdit
+            ? `<div class="nowrap"><button class="btn sm" onclick="app.renameDay('${d.id}')">✏️</button>
+               <button class="btn sm danger" onclick="app.removeDay('${d.id}')">🗑️</button></div>`
+            : (d.weekdays.length ? `<span class="plan-when">${d.weekdays.map(w => WEEKDAYS[w]).join(' · ')}</span>` : '')}
+        </div>
+        ${planEdit ? `<div class="chips">${WEEKDAYS.map((w, i) =>
+          `<span class="chip ${d.weekdays.includes(i) ? 'on' : ''}" onclick="app.toggleWeekday('${d.id}',${i})">${w}</span>`).join('')}</div>` : ''}
         ${d.type === 'cardio'
-          ? `<p class="muted small">🏃 Treino de corrida — ao registar indicas os minutos e a distância.${d.targetMinutes ? ` Alvo: ~${d.targetMinutes} min.` : ''}</p>
-             ${planEdit ? `<button class="btn sm ghost" onclick="app.setCardioTarget('${d.id}')">Definir duração alvo</button>` : ''}`
-          : `${d.exercises.map(e => `
+          ? `<p class="muted small" style="margin:10px 0 4px">${d.targetKm ? `Alvo: ~${d.targetKm} km por corrida.` : 'Sem distância alvo definida.'} Ao registar indicas os km e o tempo.</p>
+             ${planEdit ? `<button class="btn sm ghost" onclick="app.setCardioTarget('${d.id}')">Definir distância alvo</button>` : ''}`
+          : `<div class="plan-list">${d.exercises.map((e, i) => `
           <div class="plan-ex">
-            <div class="info"><b>${esc(e.name)}</b> <span class="badge">${EQUIPS[e.equip]?.label || e.equip}</span>
-              <div>${repsLabel(e)} · ${weightsLabel(e)}</div></div>
-            ${planEdit ? `<div><button class="btn sm" onclick="app.moveExercise('${d.id}','${e.id}',-1)">↑</button>
-            <button class="btn sm" onclick="app.moveExercise('${d.id}','${e.id}',1)">↓</button>
-            <button class="btn sm" onclick="app.editExercise('${d.id}','${e.id}')">✏️</button>
-            <button class="btn sm danger" onclick="app.removeExercise('${d.id}','${e.id}')">✕</button></div>` : ''}
-          </div>`).join('')}
+            <span class="ex-num">${i + 1}</span>
+            <div class="info"><b>${esc(e.name)}</b>
+              <div>${EQUIPS[e.equip]?.label || e.equip} · ${repsLabel(e)}${hasWeight(e.equip) ? ' · ' + weightsLabel(e) : ''}</div></div>
+            ${planEdit ? `<div class="nowrap"><button class="btn sm icon" onclick="app.moveExercise('${d.id}','${e.id}',-1)">↑</button><button class="btn sm icon" onclick="app.moveExercise('${d.id}','${e.id}',1)">↓</button><button class="btn sm icon" onclick="app.editExercise('${d.id}','${e.id}')">✏️</button><button class="btn sm icon danger" onclick="app.removeExercise('${d.id}','${e.id}')">✕</button></div>` : ''}
+          </div>`).join('')}</div>
         ${planEdit ? `<button class="btn sm block ghost" style="margin-top:10px" onclick="app.editExercise('${d.id}',null)">+ Adicionar exercício</button>` : ''}`}
       </div>`).join('')}
     ${planEdit ? `<button class="btn block" onclick="app.addDay()">+ Adicionar treino</button>` : ''}`;
@@ -820,9 +880,9 @@ function viewPlan() {
 function togglePlanEdit() { planEdit = !planEdit; render(); }
 function setCardioTarget(dayId) {
   const d = state.plan.days.find(x => x.id === dayId);
-  const v = prompt('Duração alvo da corrida (minutos):', d.targetMinutes || 25);
+  const v = prompt('Distância alvo da corrida (km):', d.targetKm || 3);
   if (v === null) return;
-  d.targetMinutes = parseInt(v) || 0;
+  d.targetKm = parseFloat(String(v).replace(',', '.')) || 0;
   save(); render();
 }
 function addDay() {
@@ -842,7 +902,7 @@ function saveDay() {
   const name = document.getElementById('d-name').value.trim();
   if (!name) { alert('Dá um nome ao treino.'); return; }
   const type = document.getElementById('d-type').value;
-  state.plan.days.push({ id: uid(), name, type, weekdays: [], exercises: [], ...(type === 'cardio' ? { targetMinutes: 25 } : {}) });
+  state.plan.days.push({ id: uid(), name, type, weekdays: [], exercises: [], ...(type === 'cardio' ? { targetKm: 3 } : {}) });
   save(); closeModal(); render();
 }
 function renameDay(id) {
@@ -925,6 +985,75 @@ function moveExercise(dayId, exId, dir) {
   save(); render();
 }
 
+/* ---------------- vista: SAÚDE ---------------- */
+let chartH = null;
+function weightEntries() {
+  return ((state.health || {}).weights || []).filter(w => w.kg != null);
+}
+function viewHealth() {
+  const ws = weightEntries();
+  const last = ws[ws.length - 1];
+  const first = ws[0];
+  const diff = last && first && ws.length > 1 ? +(last.kg - first.kg).toFixed(1) : null;
+  return `<h1>Saúde</h1><p class="sub">Peso e bem-estar</p>
+    <div class="card"><h3>⚖️ Peso corporal</h3>
+      <div class="weight-form">
+        <input id="w-date" type="date" value="${todayKey()}">
+        <input id="w-kg" type="number" step="0.1" inputmode="decimal" placeholder="kg">
+        <button class="btn primary" onclick="app.addWeight()">Guardar</button>
+      </div>
+      ${last ? `<div class="stats" style="margin-top:14px;grid-template-columns:1fr 1fr">
+        <div class="stat"><div class="v">${last.kg}</div><div class="l">kg · ${fmtDate(last.date)}</div></div>
+        <div class="stat"><div class="v">${diff === null ? '—' : (diff > 0 ? '+' : '') + diff}</div><div class="l">kg desde ${first ? fmtDate(first.date) : '—'}</div></div>
+      </div>` : '<p class="muted" style="margin-top:12px">Regista o teu primeiro peso para começares a acompanhar.</p>'}
+      ${ws.length ? `<div class="chart-wrap" style="margin-top:12px"><canvas id="chart-weight" height="200"></canvas></div>` : ''}
+      ${ws.length ? `<div style="margin-top:10px">${ws.slice(-5).reverse().map(w => `
+        <div class="summary-item row"><span>${fmtDate(w.date)} — <b>${w.kg} kg</b></span>
+        <button class="btn sm icon danger" onclick="app.deleteWeight('${w.date}')">✕</button></div>`).join('')}</div>` : ''}
+    </div>
+    <div class="card"><h3>🍎 Alimentação</h3>
+      <div class="dev-box">🚧 Em desenvolvimento</div>
+    </div>`;
+}
+function addWeight() {
+  const date = document.getElementById('w-date').value || todayKey();
+  const kg = parseFloat(String(document.getElementById('w-kg').value).replace(',', '.'));
+  if (!kg || kg < 20 || kg > 300) { alert('Indica um peso válido em kg.'); return; }
+  state.health = state.health || { weights: [] };
+  state.health.weights = state.health.weights.filter(w => w.date !== date);
+  state.health.weights.push({ date, kg: +kg.toFixed(1), t: Date.now() });
+  state.health.weights.sort((a, b) => a.date < b.date ? -1 : 1);
+  save(); render();
+}
+function deleteWeight(date) {
+  if (!confirm(`Apagar o registo de peso de ${fmtDate(date)}?`)) return;
+  state.health.weights = state.health.weights.filter(w => w.date !== date);
+  state.health.weights.push({ date, kg: null, t: Date.now() });
+  save(); render();
+}
+function drawWeightChart() {
+  const cv = document.getElementById('chart-weight');
+  if (!cv || !window.Chart) return;
+  const ws = weightEntries();
+  if (chartH) { chartH.destroy(); chartH = null; }
+  if (!ws.length) return;
+  chartH = new Chart(cv, {
+    type: 'line',
+    data: {
+      labels: ws.map(w => fmtDate(w.date)),
+      datasets: [{ label: 'Peso (kg)', data: ws.map(w => w.kg), borderColor: '#f472b6', backgroundColor: '#f472b633', tension: .3, fill: true }],
+    },
+    options: {
+      responsive: true,
+      scales: {
+        y: { ticks: { color: '#9aa3b5' }, grid: { color: '#2e3442' } },
+        x: { ticks: { color: '#9aa3b5' }, grid: { display: false } },
+      },
+      plugins: { legend: { labels: { color: '#e8eaf0' } } },
+    },
+  });
+}
+
 /* ---------------- vista: DEFINIÇÕES ---------------- */
 function viewSettings() {
   return `<h1>Definições</h1><p class="sub">Dados e preferências</p>
@@ -956,7 +1085,7 @@ function viewSettings() {
     <div class="card"><h3>🗑️ Apagar tudo</h3>
       <p class="muted">Remove todos os dados (plano e histórico) deste dispositivo e repõe o plano inicial.</p>
       <button class="btn danger" onclick="app.resetAll()">Apagar todos os dados</button></div>
-    <p class="muted small" style="text-align:center">GymTrack v3.5</p>`;
+    <p class="muted small" style="text-align:center">GymTrack v4.0</p>`;
 }
 function setRest(v) { state.settings.restSeconds = parseInt(v); save(); }
 function exportData() {
@@ -1007,7 +1136,7 @@ window.app = {
   startWorkout, setField, toggleSet, setFeedback, setExNote, setNotes, cancelWorkout, finishWorkout,
   stopRestTimer, calMove, showWorkout, pickExercise, togglePlanEdit, renameDay, removeDay, addDay, saveDay,
   toggleWeekday, editExercise, equipChanged, saveExercise, removeExercise, moveExercise, deleteWorkout, setCardioTarget, setRest,
-  logCardio, saveCardio, showCoachNotes,
+  logCardio, saveCardio, showCoachNotes, showDay, addWeight, deleteWeight,
   connectSync, disconnectSync, syncNow: syncStart,
   exportData, importData, resetAll, closeModal,
 };
