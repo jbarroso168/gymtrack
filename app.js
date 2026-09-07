@@ -100,6 +100,7 @@ function hist(date, name, exercises, notes = '') {
 function defaultState() {
   return {
     version: 3,
+    planVersion: PLAN_VERSION,
     settings: { restSeconds: 90 },
     coachNotes: [],
     health: { weights: [] },
@@ -178,6 +179,9 @@ function dedupeNotes(list) {
   }
   return [...map.values()].sort((a, b) => a.date < b.date ? -1 : 1);
 }
+const PLAN_VERSION = 5;
+const PLAN_NOTE = 'Plano novo: Push / Pull / Pernas. A = Peito, Tríceps e Ombros · B = Costas, Bíceps e Ombros · C = Pernas. As cargas de arranque vieram do teu histórico, por isso continuas de onde estavas. Os exercícios novos (Cable Chest Fly, Triceps Overhead, DB Hammer Curl, Extensão de pernas, Curl femoral) têm cargas por calibrar: no 1.º treino escolhe um nível/peso que te deixe ~2 reps de margem no fim da série. Os ombros trabalham 2× por semana (press + laterais no A, laterais + face pull no B). Saíram os Walking Lunges e o Cable Curl com corda, por causa do isquio e da pega. No Dia C, atenção ao isquio direito no RDL e nos bulgarians.';
+
 function migrate(s) {
   s.version = 3;
   s.updatedAt = s.updatedAt || new Date().toISOString();
@@ -186,6 +190,15 @@ function migrate(s) {
   s.health = s.health || { weights: [] };
   s.deleted = s.deleted || [];
   s.plan = s.plan || { days: planDays() };
+  // atualização única para o plano Push/Pull/Pernas (o histórico não é tocado)
+  if ((s.planVersion || 0) < PLAN_VERSION) {
+    s.planVersion = PLAN_VERSION;
+    s.plan = { days: planDays() };
+    s.activeSession = null;
+    if (!s.coachNotes.some(n => n.text === PLAN_NOTE))
+      s.coachNotes.push({ date: todayKey(), text: PLAN_NOTE });
+    s.updatedAt = new Date().toISOString();
+  }
   s.plan.days.forEach((d, i) => {
     d.type = d.type || 'gym';
     d.exercises = d.exercises || [];
