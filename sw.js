@@ -1,4 +1,4 @@
-const CACHE = 'gymtrack-v3.0';
+const CACHE = 'gymtrack-v5.0';
 const ASSETS = [
   './',
   './index.html',

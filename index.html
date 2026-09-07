@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>GymTrack</title>
-<meta name="theme-color" content="#0f1115">
+<meta name="theme-color" content="#0b0d12">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -22,9 +22,18 @@
     <button data-route="progress"><span class="ico">📈</span><span class="lbl">Progresso</span></button>
     <button data-route="health"><span class="ico">❤️</span><span class="lbl">Saúde</span></button>
     <button data-route="plan"><span class="ico">📋</span><span class="lbl">Plano</span></button>
-    <button data-route="settings"><span class="ico">⚙️</span><span class="lbl">Mais</span></button>
+    <button data-route="settings" class="desktop-only"><span class="ico">⚙️</span><span class="lbl">Definições</span></button>
   </nav>
-  <main id="view"></main>
+  <div class="content">
+    <header class="topbar">
+      <div class="tb-brand">🏋️ GymTrack</div>
+      <div class="tb-actions">
+        <button class="tb-btn" id="sync-dot" onclick="app.syncNow()" title="Sincronização">●</button>
+        <button class="tb-btn" onclick="app.go('settings')" title="Definições">⚙️</button>
+      </div>
+    </header>
+    <main id="view"></main>
+  </div>
 </div>
 <div id="timerbar" class="hidden"></div>
 <div id="modal-backdrop" class="hidden"><div id="modal"></div></div>
